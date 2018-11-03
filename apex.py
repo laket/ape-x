@@ -397,12 +397,10 @@ def learn(env_f,
     config.gpu_options.allow_growth = True
     scaffold = tf.train.Scaffold()
 
-    """
     hooks = [tf.train.StepCounterHook(every_n_steps=None, every_n_secs=10, summary_writer=summary_writer),
              tf.train.SummarySaverHook(save_secs=30, scaffold=scaffold, summary_writer=summary_writer),
              tf.train.StopAtStepHook(last_step=max_timesteps)]
-    """
-    hooks = []
+
 
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=logdir,
