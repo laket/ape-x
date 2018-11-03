@@ -42,7 +42,7 @@ tensorboard --logdir=/tmp/agent
 
 visualize results
 ```
-python demo.py --env video_pinball --logdir=/tmp/agent
+python demo.py --env VideoPinball-v0 --logdir=/tmp/agent
 ```
 
 # メモ

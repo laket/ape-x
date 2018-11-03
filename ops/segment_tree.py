@@ -21,6 +21,10 @@ custom_modules = tf.load_op_library(os.path.join(os.path.dirname(__file__), './.
 
 
 class ReplayBuffer(object):
+    """
+    C++のexperience_bufferのインターフェイス
+    なんで必要なのかよくわかっていないが高速に処理するには必要らしい
+    """
     # Custom Tensorflow ops that implemented Prioritized Experience Replay
     # TODO: Perform tests beyond learning
     def __init__(self, capacity, shapes, alpha, dtypes=[tf.float32]):

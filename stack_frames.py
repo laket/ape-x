@@ -20,7 +20,7 @@ import numpy as np
 
 from gym_tensorflow.wrappers.base import BaseWrapper
 from replay_buffer_actor import make_masked_frame
-from ops.segment_tree import tfShortTermBuffer
+from ops.segment_tree import ShortTermBuffer
 
 class StackFramesWrapper(BaseWrapper):
     def __init__(self, env, num_stacked_frames=4, data_format='NCHW'):
@@ -33,7 +33,7 @@ class StackFramesWrapper(BaseWrapper):
                 obs_space = env.observation_space[0], env.observation_space[-1], env.observation_space[1], env.observation_space[2]
             else:
                 obs_space = env.observation_space
-            self.buffer = tfShortTermBuffer(shapes=[obs_space, (env.batch_size,)], dtypes=[tf.uint8, tf.bool], framestack=num_stacked_frames, multi_step=0)
+            self.buffer = ShortTermBuffer(shapes=[obs_space, (env.batch_size,)], dtypes=[tf.uint8, tf.bool], framestack=num_stacked_frames, multi_step=0)
 
     @property
     def observation_space(self):

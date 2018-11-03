@@ -156,12 +156,12 @@ def learn(env_f,
           q_func,
           max_timesteps=100000,
           buffer_size=2 ** 21,
-          num_actors=4,
+          num_actors=1,
           actor_batch_size=384,
           batch_size=512,
           print_freq=1,
           multi_step_n=3,
-          learning_starts=50000,
+          learning_starts=1000,
           gamma=0.99,
           grad_norm_clipping=40,
           target_network_update_freq=2500,
@@ -169,7 +169,7 @@ def learn(env_f,
           prioritized_replay_beta0=0.4,
           prioritized_replay_eps=1e-6,
           number_of_prefetched_batches=16,
-          number_of_prefetching_threads=4,
+          number_of_prefetching_threads=2,
           number_of_actor_buffer_threads=3,
           actor_buffer_capacity=16,
           framestack=4,
@@ -180,6 +180,43 @@ def learn(env_f,
           optimizer={"type": "adam", "args": {"learning_rate": 0.00025 / 4}},
           #optimizer={"type": "rmsprop", "args": {"learning_rate": 0.00025 / 4, "decay": 0.95, "epsilon": 1.5e-7, "momentum": 0, "centered": True}},
           **kwargs):
+    """
+
+    :param env_f:
+    :param q_func:
+    :param max_timesteps:
+    :param buffer_size:
+    :param num_actors:
+    :param actor_batch_size:
+    :param batch_size:
+    :param print_freq:
+    :param multi_step_n:
+    :param learning_starts:
+    :param gamma:
+    :param grad_norm_clipping:
+    :param target_network_update_freq:
+    :param prioritized_replay_alpha:
+    :param prioritized_replay_beta0:
+    :param prioritized_replay_eps:
+    :param number_of_prefetched_batches:
+    :param number_of_prefetching_threads: これを大きくすると動かなくなる
+    :param number_of_actor_buffer_threads:
+    :param actor_buffer_capacity:
+    :param framestack:
+    :param data_format:
+    :param use_transformed_bellman:
+    :param use_temporal_consistency:
+    :param logdir:
+
+
+
+
+
+
+    :param optimizer:
+    :param kwargs:
+    :return:
+    """
     tf.logging.set_verbosity(tf.logging.INFO)
     print(locals())
     bellman_eps = 1e-2
@@ -329,7 +366,7 @@ def learn(env_f,
     tf.summary.scalar('training_transitions', batch_size * num_training_steps)
 
     train_dequeue = training_fifo.dequeue()
-    with tf.device('/gpu:1'):
+    with tf.device('/gpu:0'):
         # Prefetch data into the GPU every iteration
         staging_area = tf.contrib.staging.StagingArea(
                     [t.dtype for t in train_dequeue],
@@ -359,6 +396,14 @@ def learn(env_f,
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
     config.gpu_options.allow_growth = True
     scaffold = tf.train.Scaffold()
+
+    """
+    hooks = [tf.train.StepCounterHook(every_n_steps=None, every_n_secs=10, summary_writer=summary_writer),
+             tf.train.SummarySaverHook(save_secs=30, scaffold=scaffold, summary_writer=summary_writer),
+             tf.train.StopAtStepHook(last_step=max_timesteps)]
+    """
+    hooks = []
+
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=logdir,
         save_checkpoint_secs=600,
@@ -367,9 +412,7 @@ def learn(env_f,
         log_step_count_steps=None,
         scaffold=scaffold,
         config=config,
-        hooks=[tf.train.StepCounterHook(every_n_steps=None, every_n_secs=10, summary_writer=summary_writer),
-              tf.train.SummarySaverHook(save_secs=30, scaffold=scaffold, summary_writer=summary_writer),
-              tf.train.StopAtStepHook(last_step=max_timesteps)]) as sess:
+        hooks=hooks) as sess:
         sess.run_step_fn(
             lambda step_context: step_context.session.run([update_target, stage_op]))
         tf.logging.info('Training started')
@@ -425,7 +468,7 @@ def cli():
     parser.add_argument('--num-timesteps', type=int, default=int(10e6))
     parser.add_argument('--logdir', default='/tmp/apex')
     args = parser.parse_args()
-    main(env=args.env, num_timesteps=args.num_timesteps)
+    main(env=args.env, num_timesteps=args.num_timesteps, logdir=args.logdir)
 
 
 if __name__ == '__main__':

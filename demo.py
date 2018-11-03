@@ -20,7 +20,6 @@ import argparse
 import tensorflow as tf
 import numpy as np
 
-from ailabs import tlogger as logger
 import gym
 
 import gym_tensorflow

@@ -83,6 +83,14 @@ class AtariEnv(TensorFlowEnv):
         return True
 
     def step(self, action, indices=None, name=None):
+        """環境を1step処理する (batch数だけ複数の環境を一気に処理する)
+
+        :param action:
+        :param indices:
+        :param name:
+        :return:
+        """
+
         if indices is None:
             indices = np.arange(self.batch_size)
         with tf.variable_scope(name, default_name='AtariStep'):
