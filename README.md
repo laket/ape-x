@@ -75,5 +75,6 @@ make
 ```
 
 
+https://github.com/openai/gym/wiki/Table-of-environments
 
 https://github.com/openai/atari-py.git

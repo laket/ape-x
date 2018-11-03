@@ -52,9 +52,12 @@ def make_masked_frame(frames, dones, data_format):
 
 
 class ReplayBufferWrapper(BaseWrapper):
-    """Ape-X所属のReplayBuffer
+    """行動をBufferに蓄積する環境
 
     BaseWrapperは環境用のクラス
+
+    利用例 (Prioritizedはこのクラスを継承している)
+    PrioritizedReplayBufferWrapper(envs[actor_num], actor_num, actor_fifo, framestack, data_format, multi_step_n=multi_step_n)
 
     """
 
@@ -63,8 +66,8 @@ class ReplayBufferWrapper(BaseWrapper):
 
         :param gym_tensorflow.atari.tf_atari.AtariEnv env: step等の関数を持つ環境 (AtariEnvとかくる)
         :param actor_num:
-        :param queue:
-        :param num_stacked_frames:
+        :param tf.FIFOQueue queue:
+        :param int num_stacked_frames: おそらく状態として何フレームを一括として扱うか
         :param data_format:
         """
         super(ReplayBufferWrapper, self).__init__(env)
@@ -78,6 +81,7 @@ class ReplayBufferWrapper(BaseWrapper):
                 obs_space = env.observation_space[0], env.observation_space[-1], env.observation_space[1], env.observation_space[2]
             else:
                 obs_space = env.observation_space
+            # 常にnum_stacked_framesをトラックする
             self.buffer = ShortTermBuffer(shapes=[obs_space, (env.batch_size,)], dtypes=[tf.uint8, tf.bool],
                                           framestack=num_stacked_frames, multi_step=0)
 
@@ -86,6 +90,13 @@ class ReplayBufferWrapper(BaseWrapper):
         return self.env.observation_space[:-1] + (self.env.observation_space[-1] * self.num_stacked_frames, )
 
     def observation(self, indices=None, reset=False, name=None):
+        """現在のstateを返す。ただし、num_stacked_frames分拡張されたobservationを返す
+
+        :param indices: batchの中で一部のものをtrackしている場合かな？ (どこで使っている？)
+        :param reset: 未使用
+        :param name: 未使用
+        :return:
+        """
         assert indices is None
         obs = self.env.observation(indices)
         if self.data_format == 'NCHW':
@@ -116,11 +127,13 @@ class ReplayBufferWrapper(BaseWrapper):
             observations += (sliced_act_obs,)
             dones += (None,)
 
+        # 直近の4フレームをstateとしてまとめる
         obs = make_masked_frame(observations, dones, self.data_format)
         with tf.control_dependencies([sliced_act_obs]):
             # 1stepすすめる
             rew, done = self.env.step(action=action, indices=indices, name=name)
-            # (画像, 完了済み)のペアをShortTermBufferに入れる
+            # (入力画像, 完了済み)のペアをShortTermBufferに入れる
+            # 遷移後のstateは次のstepなりobservationなりで取る思想っぽい
             update_recent_history = self.buffer.enqueue([sliced_act_obs, done])
 
             # 観測列をReplayBufferに入れる
@@ -215,6 +228,7 @@ class PrioritizedReplayBufferWrapper(ReplayBufferWrapper):
                         self.transition_buffer = ShortTermBuffer(shapes=[v.get_shape() for v in current_frame], dtypes=[v.dtype for v in current_frame], framestack=self.num_stacked_frames, multi_step=self.multi_step_n)
 
             # ShortTermBufferに現在の状態を足す
+            # historyにはnum_stacked_frame+multi-step分のcurrent_frame列が入る
             is_valid, history = self.transition_buffer.enqueue(current_frame)
 
             history = [e for t in history for e in t]

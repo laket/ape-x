@@ -43,7 +43,7 @@ def main(env, num_timesteps=int(10e6), dueling=True, **kwargs):
     act = learn(
         env_f,
         num_actors=1,
-        actor_batch_size=4,
+        actor_batch_size=16,
         batch_size=16,
         q_func=model,
         max_timesteps=int(num_timesteps),
@@ -67,7 +67,7 @@ def build_act(actor_num, env, q_func, num_actions, eps, scope="deepq", data_form
     :param tf.FIFOQueue replay_queue: actor_fifo = tf.FIFOQueue
     :param prioritized_replay_eps: ここでは使ってない
     :param gamma:　ここでは使ってない
-    :param replay_queue_capacity:　ここでは使ってない
+    :param replay_queue_capacity:　ここでは使ってない。env自体のコンストラクタで渡しているため
     :param multi_step_n: ここでは使ってない
     :param framestack: ここでは使ってない
     :param tf.Variable num_actor_steps: 累計ステップ数 (global_step的にも使っている)
@@ -78,7 +78,7 @@ def build_act(actor_num, env, q_func, num_actions, eps, scope="deepq", data_form
     with tf.variable_scope('deepq', reuse=reuse):
         with tf.device('/gpu:0'):
             act_obs = env.observation()
-            # [batch_size, num_actions]な価値を返す
+            # [batch_size, num_actions]な価値を返す (duel networkとかここ)
             q_values = q_func(act_obs, num_actions, scope="read_q_func", data_format=data_format)
         deterministic_actions = tf.argmax(q_values, axis=1, output_type=tf.int32)
         batch_size = deterministic_actions.get_shape()[0]
@@ -220,12 +220,12 @@ def learn(env_f,
     :param target_network_update_freq:
     :param prioritized_replay_alpha:
     :param prioritized_replay_beta0:
-    :param prioritized_replay_eps:
+    :param float prioritized_replay_eps: (default 1e-6) ReplayBufferのPriorityで優先度が0にならないようにするeps
     :param number_of_prefetched_batches:
     :param number_of_prefetching_threads: これを大きくすると動かなくなる
-    :param number_of_actor_buffer_threads:
+    :param int number_of_actor_buffer_threads: ReplayBufferにActorからの通信結果をつっこむスレッド数
     :param actor_buffer_capacity: (default 16)
-    :param framestack:
+    :param int framestack: 何フレームを一つの状態として扱うか(default 4)
     :param str data_format: default (NCHW)
     :param use_transformed_bellman:
     :param use_temporal_consistency:
@@ -254,6 +254,8 @@ def learn(env_f,
     assert actor_batch_size % num_actors == 0
     envs = [AutoResetWrapper(env_f(actor_batch_size // num_actors), max_frames=50000) for actor_num in range(num_actors)]
 
+    # enqueue_op = self.queue.enqueue([obs, sliced_act_obs, rew, done, action, self.actor_num]) で入れられる
+    # ActorからLearnerへの通信用のQueue
     actor_fifo = tf.FIFOQueue(actor_buffer_capacity, dtypes=PrioritizedReplayBufferWrapper.get_buffer_dtypes(multi_step_n, framestack),
                               shapes=PrioritizedReplayBufferWrapper.get_buffer_shapes(envs[0], multi_step_n, framestack, data_format=data_format))
 
@@ -264,6 +266,7 @@ def learn(env_f,
     # Compute \epsilon for each actor
     alpha = 7
     base_eps = 0.4
+    # 論文を見ろ [base_eps, base_eps**(1+alpha)]の範囲でなるべく散らすようにしている
     eps_array = base_eps ** (1 + np.flip(np.arange(actor_batch_size), 0) * alpha / (actor_batch_size - 1))
     eps_array = np.reshape(eps_array, [num_actors, -1])
 
@@ -297,8 +300,11 @@ def learn(env_f,
     # This essentially computes the priority score as well as compute the n-step reward
 
     def make_transition_from_history(history):
+        # 全部バッチ単位で処理されていることに注意
         # sliced_act_obs, rew, done, output_actions, q_values, q_t_selected
         assert len(history) == 6 * (multi_step_n + framestack)
+        # バッファには構造を無視して突っ込まれているので、構造を回復させる
+        # 長さ [multi_step_n + framestack]
         history = [history[i:i + 6] for i in range(0, len(history), 6)]
 
         old = history[-1 - multi_step_n]
@@ -321,6 +327,7 @@ def learn(env_f,
 
         rewards, end_of_episode = make_masked_reward(rewards[ -1- multi_step_n: - 1], dones[ -1- multi_step_n: - 1])
         assert len(rewards) == multi_step_n
+        # このclipの影響で高得点落とさない？
         discounted_reward = sum([reward_clipping(rew) * gamma ** n for n, rew in enumerate(rewards)])
 
         _, _, _, old_action, _, old_q_values_selected=old
@@ -340,9 +347,10 @@ def learn(env_f,
 
     # Create the replay buffer
     replay_buffer = ReplayBuffer(buffer_size,
-                                   shapes=[d.get_shape()[1:] for d in actor_data],
-                                   dtypes=[d.dtype for d in actor_data],
-                                   alpha=prioritized_replay_alpha)
+                                 shapes=[d.get_shape()[1:] for d in actor_data],
+                                 dtypes=[d.dtype for d in actor_data],
+                                 alpha=prioritized_replay_alpha)
+
     tf.summary.scalar("replay_buffer/fraction_of_%d_full" % buffer_size,
                       tf.to_float(replay_buffer.size()) * (1. / buffer_size))
 

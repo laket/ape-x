@@ -67,7 +67,8 @@ class ReplayBuffer(object):
         return enqueue_op
 
     def assign(self, indices, values):
-        """指定したindicesの優先度をvalues * self._alphaに更新する (alphaは減衰率みたいなの？)
+        """指定したindicesの優先度をvalues ** self._alphaに更新する
+        (alphaは優先度を重視する度合い (0なら無視してUniform))
 
         :param indices:
         :param values:
@@ -79,6 +80,17 @@ class ReplayBuffer(object):
                                                             values)
 
     def sample_proportional_from_buffer(self, size, beta, minimum_sample_size=1):
+        """
+
+        重みの考え方はPrioritized Experience Replayの論文を参照。
+
+
+        :param size:
+        :param beta:
+        :param minimum_sample_size:
+        :return:
+        """
+
         prefixsum = tf.random_uniform((size,), dtype=tf.float32)
         idxes, weights, total, p_min, _num_elements, components = custom_modules.replay_buffer_priority_sample(handle=self._buffer,
                                                                prefixsum=prefixsum,

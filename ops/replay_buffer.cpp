@@ -368,11 +368,11 @@ REGISTER_OP("ReplayBufferPrioritySample")
     .Input("handle: resource")
     .Input("prefixsum: T")
     .Output("indices: int64")
-    .Output("weights: T")
-    .Output("sum: T")
-    .Output("min: T")
-    .Output("size: int64")
-    .Output("components: Tcomponents")
+    .Output("weights: T")          : sum由来。ここのindicesの重み
+    .Output("sum: T")              : total priority
+    .Output("min: T")              : min priority
+    .Output("size: int64")         :
+    .Output("components: Tcomponents") : 実際の値
     .SetShapeFn(::tensorflow::shape_inference::UnknownShape);
 */
 template<typename T>
@@ -780,6 +780,18 @@ REGISTER_OP("ExperienceBufferEnqueueRecent")
 
 REGISTER_KERNEL_BUILDER(Name("ExperienceBufferEnqueueRecent").Device(DEVICE_CPU), ExperienceBufferEnqueueRecentOp);
 
+
+/*
+呼び出し例
+
+    def encode_history(self):
+        valid, history=custom_modules.experience_buffer_encode_recent(self._buffer,
+                                                                      blank_components=self.blank_components,
+                                                                      Tout_components=self.dtypes * (self._length-1))
+
+validはExperienceBufferが長さ全体まで埋まっているかどうか
+historyは古い順からBufferのデータを全部返り値にいれたもの
+*/
 
 class ExperienceBufferEncodeRecentOp : public ExperienceBufferAccessOp {
     public:
