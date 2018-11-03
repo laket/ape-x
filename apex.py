@@ -42,6 +42,9 @@ def main(env, num_timesteps=int(10e6), dueling=True, **kwargs):
     )
     act = learn(
         env_f,
+        num_actors=1,
+        actor_batch_size=4,
+        batch_size=16,
         q_func=model,
         max_timesteps=int(num_timesteps),
         dueling=True,

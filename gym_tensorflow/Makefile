@@ -4,8 +4,8 @@ USE_GPU := 1
 
 DIR := ./
 
-TF_INC := $(shell python -c 'import tensorflow as tf; print(tf.sysconfig.get_include())')
-TF_LIB := $(shell python -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')
+TF_INC := $(shell python3 -c 'import tensorflow as tf; print(tf.sysconfig.get_include())')
+TF_LIB := $(shell python3 -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')
 FLAGS := -std=c++11 -shared -fPIC -I$(TF_INC) -I$(TF_INC)/external/nsync/public -L$(TF_LIB) -D_GLIBCXX_USE_CXX11_ABI=0 -O2# -DNDEBUG
 CXX := g++
 LDFLAGS := -ltensorflow_framework
@@ -38,13 +38,15 @@ ifeq ($(strip $(USE_SDL)), 1)
     LDFLAGS += $(shell sdl-config --libs)
 endif
 
+TARGET_NAME := pywrap_gym_tensorflow.so
 
-all: gym_tensorflow.so
 
-gym_tensorflow.so:
-	$(CXX) $(FLAGS) $(SOURCES) $(LDFLAGS) -o gym_tensorflow.so
+all: $(TARGET_NAME)
+
+$(TARGET_NAME):
+	$(CXX) $(FLAGS) $(SOURCES) $(LDFLAGS) -o $(TARGET_NAME)
 
 clean:
-	rm -rf gym_tensorflow.so
+	rm -rf $(TARGET_NAME)
 
 remake: clean all

@@ -19,7 +19,7 @@ import os
 
 import tensorflow as tf
 
-gym_tensorflow_module = tf.load_op_library(os.path.join(os.path.dirname(__file__), 'gym_tensorflow.so'))
+gym_tensorflow_module = tf.load_op_library(os.path.join(os.path.dirname(__file__), 'pywrap_gym_tensorflow.so'))
 
 
 class TensorFlowEnv(object):
@@ -27,6 +27,7 @@ class TensorFlowEnv(object):
 
 
 class PythonEnv(TensorFlowEnv):
+
     def step(self, action, indices=None, name=None):
         if indices is None:
             indices = tf.convert_to_tensor(np.arange(self.batch_size, dtype=np.int32))

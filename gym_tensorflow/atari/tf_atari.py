@@ -33,7 +33,24 @@ screen_size = {'name_this_game': (210, 160), 'hero': (210, 160), 'space_invaders
 
 
 class AtariEnv(TensorFlowEnv):
+    """
+    TensorflowEnvはからのクラスなのでここだけ読めば良い
+    環境を表現するクラス(C++のラッパー)
+
+    atari/tf_atari.cppとtf_env.cppで定義される環境とやりとりする
+    """
+
     def __init__(self, game, batch_size, warp_size=(84, 84), color_pallete=None, frameskip=4, name=None):
+        """
+
+        :param str game: ゲーム名
+        :param int batch_size: 何ゲーム同時に扱うか
+        :param tuple[int,int] warp_size: 観測するときの画面サイズ
+        :param color_pallete:
+        :param int frameskip: 1回のアクションを繰り返す回数？
+        :param str name: Variable Scopeに使う名前
+        """
+
         assert game in games, "{} is not part of the available Atari suite".format(game)
         if color_pallete is None:
             color_pallete = grayscale_palette

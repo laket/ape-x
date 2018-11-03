@@ -55,4 +55,4 @@ def main(num_actors=128, num_threads=16):
             time.sleep(5)
 
 if __name__ == "__main__":
-    main()
+    main(num_actors=8, num_threads=2)

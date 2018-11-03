@@ -15,6 +15,7 @@ limitations under the License.
 */
 #include <iostream>
 #include <string>
+#include <mutex>
 #include <ale_interface.hpp>
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/op.h"
@@ -158,10 +159,15 @@ class AtariMakeOp : public EnvironmentMakeOp {
 
         const auto thread_pool = context->device()->tensorflow_cpu_worker_threads();
         const int num_threads = std::min(thread_pool->num_threads, batch_size);
+
+        std::mutex atari_mutex;
+
         auto f = [&](int thread_id) {
             for(int b =thread_id; b < batch_size;b+=num_threads)
             {
+                atari_mutex.lock();
                 env->load_rom(m_game, b);
+                atari_mutex.unlock();
             }
         };
 
@@ -174,6 +180,7 @@ class AtariMakeOp : public EnvironmentMakeOp {
         }
         f(0);
         counter.Wait();
+
         return Status::OK();
     }
     std::string m_game;
