@@ -52,20 +52,43 @@ def main(env, num_timesteps=int(10e6), dueling=True, **kwargs):
     )
 
 
-def build_act(actor_num, env, q_func, num_actions, eps, scope="deepq", data_format=None, reuse=None, replay_queue=None, prioritized_replay_eps=None, gamma=None, replay_queue_capacity=None, multi_step_n=1, framestack=4, num_actor_steps=None):
+def build_act(actor_num, env, q_func, num_actions, eps, scope="deepq", data_format=None, reuse=None, replay_queue=None,
+              prioritized_replay_eps=None, gamma=None, replay_queue_capacity=None, multi_step_n=1, framestack=4, num_actor_steps=None):
+    """
+
+    :param int actor_num:  Actorの数。未使用
+    :param PrioritizedReplayBufferWrapper env: 環境
+    :param q_func: 状態価値関数(duel network) _cnn_to_mlp(convs, hiddens, dueling)
+    :param int num_actions: Actionの数 (q_funcの出力数？)
+    :param float or tf.Tensor eps: epsilon-greedyのepsilon
+    :param scope:
+    :param data_format: NCHWとか
+    :param reuse: VariableScopeのいつものやつ
+    :param tf.FIFOQueue replay_queue: actor_fifo = tf.FIFOQueue
+    :param prioritized_replay_eps: ここでは使ってない
+    :param gamma:　ここでは使ってない
+    :param replay_queue_capacity:　ここでは使ってない
+    :param multi_step_n: ここでは使ってない
+    :param framestack: ここでは使ってない
+    :param tf.Variable num_actor_steps: 累計ステップ数 (global_step的にも使っている)
+    :return:
+    """
     # Build the actor using \epsilon-greedy exploration
     # Environments are wrapped with a data gathering class
     with tf.variable_scope('deepq', reuse=reuse):
         with tf.device('/gpu:0'):
             act_obs = env.observation()
+            # [batch_size, num_actions]な価値を返す
             q_values = q_func(act_obs, num_actions, scope="read_q_func", data_format=data_format)
         deterministic_actions = tf.argmax(q_values, axis=1, output_type=tf.int32)
         batch_size = deterministic_actions.get_shape()[0]
         with tf.device('/cpu:0'):
             random_actions = tf.random_uniform(tf.stack([batch_size]), minval=0, maxval=num_actions, dtype=tf.int32)
             chose_random = tf.random_uniform(tf.stack([batch_size]), minval=0, maxval=1, dtype=tf.float32) < eps
+            # epsilon後のAction
             output_actions = tf.where(chose_random, random_actions, deterministic_actions)
 
+            # [batch_size]の選んだActionにおけるQ(s,a)を格納
             q_t_selected = tf.reduce_sum(q_values * tf.one_hot(output_actions, num_actions), 1)
 
         with tf.control_dependencies([tf.assign_add(num_actor_steps, batch_size, use_locking=True)]):
@@ -182,13 +205,13 @@ def learn(env_f,
           **kwargs):
     """
 
-    :param env_f:
+    :param ()->gym_tensorflow.atari.tf_atari.AtariEnv env_f: AtariEnvを返す関数
     :param q_func:
-    :param max_timesteps:
+    :param int max_timesteps: おそらく学習完了までの合計学習ステップ (global_stepと共有している)
     :param buffer_size:
-    :param num_actors:
-    :param actor_batch_size:
-    :param batch_size:
+    :param int num_actors: 行動を収集するActorの数 (この数スレッドが立つ)
+    :param int actor_batch_size: Actorが生成するbatch_size (このbatchをnum_actorsで分担する。その後、各actorでthread_pool->num_threadsで処理する)
+    :param int batch_size: Learnerにとってのbatch size
     :param print_freq:
     :param multi_step_n:
     :param learning_starts:
@@ -201,22 +224,17 @@ def learn(env_f,
     :param number_of_prefetched_batches:
     :param number_of_prefetching_threads: これを大きくすると動かなくなる
     :param number_of_actor_buffer_threads:
-    :param actor_buffer_capacity:
+    :param actor_buffer_capacity: (default 16)
     :param framestack:
-    :param data_format:
+    :param str data_format: default (NCHW)
     :param use_transformed_bellman:
     :param use_temporal_consistency:
     :param logdir:
-
-
-
-
-
-
     :param optimizer:
     :param kwargs:
     :return:
     """
+
     tf.logging.set_verbosity(tf.logging.INFO)
     print(locals())
     bellman_eps = 1e-2
@@ -236,7 +254,8 @@ def learn(env_f,
     assert actor_batch_size % num_actors == 0
     envs = [AutoResetWrapper(env_f(actor_batch_size // num_actors), max_frames=50000) for actor_num in range(num_actors)]
 
-    actor_fifo = tf.FIFOQueue(actor_buffer_capacity, dtypes=PrioritizedReplayBufferWrapper.get_buffer_dtypes(multi_step_n, framestack), shapes=PrioritizedReplayBufferWrapper.get_buffer_shapes(envs[0], multi_step_n, framestack, data_format=data_format))
+    actor_fifo = tf.FIFOQueue(actor_buffer_capacity, dtypes=PrioritizedReplayBufferWrapper.get_buffer_dtypes(multi_step_n, framestack),
+                              shapes=PrioritizedReplayBufferWrapper.get_buffer_shapes(envs[0], multi_step_n, framestack, data_format=data_format))
 
     tf.summary.scalar("actor_buffer/fraction_of_%d_full" % actor_buffer_capacity,
                       tf.to_float(actor_fifo.size()) * (1. / actor_buffer_capacity))
@@ -253,14 +272,14 @@ def learn(env_f,
     def make_actors():
         for actor_num, (env, eps) in enumerate(zip(envs, eps_array)):
             act_f = build_act(actor_num, env, q_func, env.action_space, eps,
-                                                                    scope='deepq_actor',
-                                                                    data_format=data_format,
-                                                                    reuse=actor_num > 0,
-                                                                    replay_queue=actor_fifo, replay_queue_capacity=actor_buffer_capacity,
-                                                                    prioritized_replay_eps=prioritized_replay_eps,
-                                                                    gamma=gamma,
-                                                                    num_actor_steps=num_actor_steps,
-                                                                    multi_step_n=multi_step_n, framestack=framestack)
+                              scope='deepq_actor',
+                              data_format=data_format,
+                              reuse=actor_num > 0,
+                              replay_queue=actor_fifo, replay_queue_capacity=actor_buffer_capacity,
+                              prioritized_replay_eps=prioritized_replay_eps,
+                              gamma=gamma,
+                              num_actor_steps=num_actor_steps,
+                              multi_step_n=multi_step_n, framestack=framestack)
             act.append(act_f)
     make_actors()
 

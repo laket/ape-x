@@ -29,6 +29,16 @@ using namespace std;
 typedef std::vector<PersistentTensorEx> PersistentTuple;
 
 
+/*
+ リプレイバッファー
+ リングバッファを使っているため、読み込み速度が遅いと新しい値で上書きされる
+
+ encode(idx, &tuple): idx番目のデータをtuple(引数)に追加する
+ enqueue(components): データを追加する。componentsはひと揃いのデータ
+ encode_history(QueueInterface::Tuple* history): 一番古いデータから順にすべてhistoryに足す
+ wait_for_samples(num_samples) : num_samplesたまるまで待つ
+*/
+
 class ExperienceBuffer : public ResourceBase
 {
   public:
@@ -54,6 +64,12 @@ class ExperienceBuffer : public ResourceBase
         return component_dtypes_;
     }
 
+    /*
+      渡されたTupleに指定したidxの要素を追加する
+       buffer_[idx_component][idx_batch]
+      bufferの添字が直感と順番が逆な点に注意
+      std::vector<std::vector<PersistentTensorEx>>
+    */
     virtual void encode(OpKernelContext* ctx, int64 idx, QueueInterface::Tuple* tuple) {
         tf_shared_lock l(mu_);
 
@@ -79,6 +95,8 @@ class ExperienceBuffer : public ResourceBase
         tf_shared_lock l(mu_);
         for (auto h = 0; h < size(); ++h)
         {
+            //size = min(next_idx_, capacity_)
+            // 端のidxまでいったら先頭に戻す
             if(size() == capacity())
             {
                 const auto idx = (next_idx_ + h) % capacity_;
@@ -88,6 +106,10 @@ class ExperienceBuffer : public ResourceBase
                 encode(ctx, h, history);
         }
     }
+
+    /*
+      リングバッファにあらたにcomponentsを追加する
+    */
     virtual int64 enqueue(const QueueInterface::Tuple& components)
     {
         mutex_lock l(mu_);
@@ -319,6 +341,40 @@ class ExperienceBufferWithPriorityAccessOp : public ExperienceBufferAccessOp {
     virtual void Compute(OpKernelContext *ctx, ExperienceBuffer *buffer, Tensor* Tsum_tree, Tensor* Tmin_tree) = 0;
 };
 
+
+/*
+ReplayBufferから優先度に比例した重み付けでサンプリングを行う。
+prefixsumは[0,1]の範囲で与えられる。
+内部では、
+1. prefixsumと合計重みの積が計算される。
+2. Bufferの先頭から自分までの重みの合計が上記の積と一致するサンプルを見つける
+をバッチサイズだけ繰り返す。これにより重みに比例した確率でサンプリングされる。
+
+サンプリングされた点は取り除かれない。
+取り除くかどうかは完全に新規性により評価される。
+
+呼び出し例
+prefixsum = tf.random_uniform((size,), dtype=tf.float32)
+idxes, weights, total, p_min, _num_elements, components = custom_modules.replay_buffer_priority_sample(
+              handle=self._buffer,
+              prefixsum=prefixsum,
+              Tcomponents=self.dtypes,
+              minimum_sample_size=minimum_sample_size)
+
+REGISTER_OP("ReplayBufferPrioritySample")
+    .Attr("Tcomponents: list(type) >= 1")
+    .Attr("minimum_sample_size: int = 1")
+    .Attr("T: type")
+    .Input("handle: resource")
+    .Input("prefixsum: T")
+    .Output("indices: int64")
+    .Output("weights: T")
+    .Output("sum: T")
+    .Output("min: T")
+    .Output("size: int64")
+    .Output("components: Tcomponents")
+    .SetShapeFn(::tensorflow::shape_inference::UnknownShape);
+*/
 template<typename T>
 class ReplayBufferPrioritySampleOp : public ExperienceBufferWithPriorityAccessOp<T> {
     public:
@@ -331,6 +387,7 @@ class ReplayBufferPrioritySampleOp : public ExperienceBufferWithPriorityAccessOp
         auto min_tree = Tmin_tree->flat<T>();
 
         const auto capacity = buffer->capacity();
+        // prefix_sumに該当
         const Tensor &search_values = ctx->input(1);
         auto search_values_flat = search_values.flat<T>();
         const int64 batch_size = search_values.dim_size(0);
@@ -365,7 +422,9 @@ class ReplayBufferPrioritySampleOp : public ExperienceBufferWithPriorityAccessOp
             tf_shared_lock l(buffer->seg_tree_mu_);
 
             // Set the value of the sum output
+            // 0は番兵？ 全体のtotal
             total_priority->flat<T>().setConstant(sum_tree(1));
+            // 全体のmin
             min_priority->flat<T>().setConstant(min_tree(1));
             Tsize->flat<int64>().setConstant(buffer->size());
 
@@ -441,6 +500,15 @@ TF_CALL_float(REGISTER_SEGMENT_LOOKUP_CPU);
 
 
 
+/*
+ReplayBufferに優先度つきでデータをつむ
+    return custom_modules.replay_buffer_priority_enqueue_many(self._buffer,
+                                                              priorities,
+                                                              components)
+
+
+*/
+
 template<typename T>
 class ReplayBufferPriorityEnqueueManyOp : public ExperienceBufferWithPriorityAccessOp<T> {
     public:
@@ -495,9 +563,11 @@ class ReplayBufferPriorityEnqueueManyOp : public ExperienceBufferWithPriorityAcc
             mutex_lock l(buffer->seg_tree_mu_);
             for (int64 index = 0; index < num_elements; ++index)
             {
+                // データを追加し, segment treeを更新する
                 const int64 element_idx = buffer->enqueue(batch[index]);
                 {
                     // Update sum
+                    // element_idxが含まれる区間に全部足す
                     auto idx = element_idx + capacity;
                     sum_tree(idx) = priority_values(index);
                     for (int64 i = idx; i > 1; i >>= 1)
@@ -561,6 +631,7 @@ class ReplayBufferUpdatePriorityOp : public ExperienceBufferWithPriorityAccessOp
             mutex_lock l(buffer->seg_tree_mu_);
             for (auto index = 0; index < num_elements; ++index)
             {
+                //はみでてるときよう???
                 if(indices(index) >= buffer->oldest_index())
                 {
                     const auto element_idx = indices(index) % capacity;
@@ -665,6 +736,7 @@ class ExperienceBufferEnqueueRecentOp : public ExperienceBufferAccessOp {
         OpInputList components;
         OP_REQUIRES_OK(ctx, ctx->input_list("components", &components));
 
+        // typedef std::vector<Tensor> Tuple なぜ一度これを介するのか不明
         QueueInterface::Tuple output_tuple;
 
         // If buffer is not full, repeat blank_components
@@ -683,6 +755,7 @@ class ExperienceBufferEnqueueRecentOp : public ExperienceBufferAccessOp {
 
         Tensor* Tvalid = NULL;
         OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &Tvalid));
+        // capacityと一致しているか見る
         Tvalid->flat<bool>().setConstant(buffer->size() == buffer->capacity());
 
         buffer->enqueue(tuple);

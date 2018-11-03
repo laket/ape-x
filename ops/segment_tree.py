@@ -67,6 +67,12 @@ class ReplayBuffer(object):
         return enqueue_op
 
     def assign(self, indices, values):
+        """指定したindicesの優先度をvalues * self._alphaに更新する (alphaは減衰率みたいなの？)
+
+        :param indices:
+        :param values:
+        :return:
+        """
         values = values ** self._alpha
         return custom_modules.replay_buffer_update_priority(self._buffer,
                                                             indices,
@@ -99,11 +105,15 @@ class ReplayBuffer(object):
 
 
 class ShortTermBuffer(object):
+    """短期Buffer用のメモリ
+
+    """
     # This buffer is a helper class to create a stack of frames as well as short term history (n-step transitions)
     def __init__(self, shapes, dtypes=[tf.float32], framestack=1, multi_step=1):
         self.dtypes = dtypes
         self.shapes = shapes
         self._length = framestack + multi_step
+        # experience_bufferはその他Operatorで使えるhandlerを返す
         self._buffer = custom_modules.experience_buffer(self._length - 1, component_types=self.dtypes, shapes=shapes)
         self.blank_components = [tf.zeros(s,t) for s, t in zip(self.shapes, self.dtypes)]
 
@@ -111,7 +121,9 @@ class ShortTermBuffer(object):
         return custom_modules.experience_buffer_size(self._buffer)
 
     def encode_history(self):
-        valid, history=custom_modules.experience_buffer_encode_recent(self._buffer, blank_components=self.blank_components, Tout_components=self.dtypes * (self._length-1))
+        valid, history=custom_modules.experience_buffer_encode_recent(self._buffer,
+                                                                      blank_components=self.blank_components,
+                                                                      Tout_components=self.dtypes * (self._length-1))
         history = list(zip( * ([iter(history)] * len(self.dtypes))))
         for step in history:
             for s, t, c in zip(self.shapes, self.dtypes, step):
@@ -120,8 +132,18 @@ class ShortTermBuffer(object):
         return valid, history
 
     def enqueue(self, components):
+        """データを追加する
+
+        呼び出し例
+        components = sliced_act_obs, rew, done, action, q_values, q_t_selected
+
+        :param components:
+        :return:
+        """
         components = [tf.convert_to_tensor(v, dtype=dt) for v, dt in zip(components, self.dtypes)]
-        valid, history=custom_modules.experience_buffer_enqueue_recent(self._buffer, components=components, blank_components=self.blank_components, Tout_components=self.dtypes * self._length)
+        valid, history=custom_modules.experience_buffer_enqueue_recent(self._buffer, components=components,
+                                                                       blank_components=self.blank_components,
+                                                                       Tout_components=self.dtypes * self._length)
         history = list(zip( * ([iter(history)] * len(self.dtypes))))
         for step in history:
             for s, t, c in zip(self.shapes, self.dtypes, step):
