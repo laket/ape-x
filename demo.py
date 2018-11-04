@@ -66,7 +66,7 @@ def demo(gym_env, q_func, dueling, logdir, data_format='NCHW', num_episodes=200,
 
     ####################################################################
     with tf.train.SingularMonitoredSession(
-        checkpoint_dir=logdir,) as sess:
+                checkpoint_dir=logdir, ) as sess:
 
         ep_rew = []
         for _ in range(num_episodes):

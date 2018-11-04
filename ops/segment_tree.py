@@ -83,10 +83,12 @@ class ReplayBuffer(object):
         """
 
         重みの考え方はPrioritized Experience Replayの論文を参照。
+        max_weightによる補正がなければ論文通り
+        max_weightを使うことで各重みの最大値を1におさえている？
 
 
         :param size:
-        :param beta:
+        :param tf.Tensor beta: importance samplingにどれだけ近づけるか (1なら完全なimportance sampling
         :param minimum_sample_size:
         :return:
         """

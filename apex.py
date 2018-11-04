@@ -43,8 +43,8 @@ def main(env, num_timesteps=int(10e6), dueling=True, **kwargs):
     act = learn(
         env_f,
         num_actors=1,
-        actor_batch_size=16,
-        batch_size=16,
+        actor_batch_size=256,
+        batch_size=512,
         q_func=model,
         max_timesteps=int(num_timesteps),
         dueling=True,
@@ -106,15 +106,17 @@ def build_train(train_dequeue, num_training_steps, q_func, num_actions, optimize
         q_t = q_func(obs_t_input, num_actions, scope="q_func", data_format=data_format)
         q_func_vars = U.scope_vars(U.absolute_scope_name("q_func"))
 
-        # target q network evalution
+        # target q network evalution (multi-step分あとの観測値をつかって予測)
         q_tp1 = q_func(obs_tp1_input, num_actions, scope="target_q_func", data_format=data_format)
         target_q_func_vars = U.scope_vars(U.absolute_scope_name("target_q_func"))
 
         # q scores for actions which we know were selected in the given state.
+        # Q(s_t, A_t, theta)
         q_t_selected = tf.reduce_sum(q_t * tf.one_hot(act_t_ph, num_actions), 1)
 
         # compute estimate of best possible value starting from state at t + 1
         if double_q:
+            # 評価はTarget Networkだが行動値は現在のネットワークのものを使う (これって原義通りのdouble Qか？)
             q_tp1_using_online_net = q_func(obs_tp1_input, num_actions, scope="q_func", reuse=True, data_format=data_format)
             q_tp1_best_using_online_net = tf.arg_max(q_tp1_using_online_net, 1)
             q_tp1_best = tf.reduce_sum(q_tp1 * tf.one_hot(q_tp1_best_using_online_net, num_actions), 1)
@@ -178,7 +180,7 @@ def build_train(train_dequeue, num_training_steps, q_func, num_actions, optimize
 def learn(env_f,
           q_func,
           max_timesteps=100000,
-          buffer_size=2 ** 21,
+          buffer_size=2 ** 18,
           num_actors=1,
           actor_batch_size=384,
           batch_size=512,
@@ -364,17 +366,22 @@ def learn(env_f,
 
     def make_training_input():
         with tf.variable_scope("training_input_preprocessing"):
+            # もとのデータの先頭に余計なものがひっついてくる
+            # return (idxes, weights) + tuple(components)
             transition = replay_buffer.sample_proportional_from_buffer(batch_size, prioritized_replay_beta0, minimum_sample_size=learning_starts)
 
             # GPU because in our SKU the CPUs were the bottleneck
             with tf.device('/gpu:1'):
                 idxes, weights, actor_num, transition_action, transition_reward, transition_done=transition[:6]
+                # (observations, dones)
                 frames = transition[6:]
                 assert len(frames) == (framestack + multi_step_n) * 2
 
                 # Handle edge cases (done = True)
                 frames, dones=frames[:framestack + multi_step_n], frames[framestack + multi_step_n:]
+                # 観測値 (もっとも古いstatus)
                 obs_t = make_masked_frame(frames[:framestack], dones[:framestack], data_format)
+                # もっとも新しい観測値(multistepだけあと)
                 obs_tp1 = make_masked_frame(frames[ - framestack:], dones[ - framestack:], data_format)
 
                 return actor_num, obs_t, transition_action, transition_reward, obs_tp1, transition_done, weights, idxes
